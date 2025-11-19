@@ -194,15 +194,57 @@ if st.button("开始解析并汇总"):
         st.session_state["n_files"] = 0
     else:
         all_dfs = []
+        seen_invoices = set()  # 记录已经解析过的发票“身份证”
+
         for f in uploaded_files:
             df_one = parse_invoice_pdf(f)
             if df_one.empty:
                 st.warning(f"文件 {f.name} 没有解析到明细行，请确认格式。")
+                continue
+
+            # ====== 构造这张发票的“身份证” ======
+            # 优先用：发票号码 + 开票日期 + 购买方名称 + 销售方名称
+            invoice_no = None
+            issue_date = None
+            buyer_name = None
+            seller_name = None
+
+            if "发票号码" in df_one.columns and df_one["发票号码"].notna().any():
+                invoice_no = df_one["发票号码"].dropna().iloc[0]
+            if "开票日期" in df_one.columns and df_one["开票日期"].notna().any():
+                issue_date = df_one["开票日期"].dropna().iloc[0]
+            if "购买方名称" in df_one.columns and df_one["购买方名称"].notna().any():
+                buyer_name = df_one["购买方名称"].dropna().iloc[0]
+            if "销售方名称" in df_one.columns and df_one["销售方名称"].notna().any():
+                seller_name = df_one["销售方名称"].dropna().iloc[0]
+
+            # 如果抬头信息都没有，就退而求其次用文件名当 key
+            if any([invoice_no, issue_date, buyer_name, seller_name]):
+                key = (invoice_no, issue_date, buyer_name, seller_name)
             else:
-                all_dfs.append(df_one)
+                key = ("FILE_ONLY", f.name)
+
+            # ====== 检查是否重复 ======
+            if key in seen_invoices:
+                # 已经解析过同一张发票，跳过这次
+                if invoice_no or issue_date:
+                    msg = (
+                        "检测到重复发票：  \n"
+                        f"发票号：{invoice_no or '未知'}  \n"
+                        f"日期：{issue_date or '未知'}  \n"
+                        f"文件：{f.name} 已被自动忽略。"
+                    )
+                    st.warning(msg)
+                else:
+                    st.warning(f"文件 {f.name} 与之前上传的文件重复（根据文件名判断），已自动忽略。")
+                continue
+
+            # 记录这张发票的 key，避免后面再被计入
+            seen_invoices.add(key)
+            all_dfs.append(df_one)
 
         if not all_dfs:
-            st.error("所有文件都没有解析到明细行，请检查格式。")
+            st.error("所有文件都没有解析到有效的发票明细（或全部为重复发票），请检查格式。")
             st.session_state["df_all"] = None
             st.session_state["n_files"] = 0
         else:
