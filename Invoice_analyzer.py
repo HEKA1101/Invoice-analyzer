@@ -289,7 +289,7 @@ if df_all is not None and not df_all.empty:
 
         # 不显示左侧 0,1,... 的索引
         st.dataframe(summary, use_container_width=True, hide_index=True)
-        st.write(f"**{date_label}发票合计金额：{total_amount:.2f} 元**")
+        st.write(f"**{date_label} 发票合计金额：{total_amount:.2f} 元**")
 
     # ================= 情况 2：上传了多个文件 =================
     else:
