@@ -176,8 +176,6 @@ uploaded_files = st.file_uploader(
     type=["pdf"],
     accept_multiple_files=True,
 )
-query_text = st.text_input("搜索关键词（任意）", "")
-
 
 # ====== 解析按钮 + 状态初始化 ======
 
@@ -260,9 +258,6 @@ df_all = st.session_state.get("df_all")
 if df_all is not None and not df_all.empty:
     n_files = st.session_state.get("n_files", 1)
     total_amount = df_all["金额"].sum()
-
-    # 根据当前搜索关键词过滤明细
-    df_filtered = search_items(df_all, query_text)
 
     # ================= 情况 1：只上传 1 个文件 =================
     if n_files <= 1:
@@ -382,11 +377,81 @@ if df_all is not None and not df_all.empty:
     #               下面是“明细记录（按发票分组显示）”
     # =========================================================
     st.subheader("明细记录")
+    
+    # ===== 在已解析的数据里搜索（不会重新解析）=====
+    query_text = st.text_input("搜索关键词（任意）", "", key="search_keyword")
+    # 根据当前搜索关键词过滤明细
+    df_filtered = search_items(df_all, query_text)
+
     st.write(
         f"当前搜索关键词：`{query_text if query_text else '未输入'}`，"
         f"共 {len(df_filtered)} 条记录。"
     )
 
+    # ---------- 搜索结果统计折叠块 ----------
+    if query_text.strip():  # 只在输入了关键词时显示
+        df_stats = df_filtered.copy()
+
+        # 涉及发票数量
+        if "发票文件" in df_stats.columns:
+            n_invoices = df_stats["发票文件"].nunique()
+        else:
+            n_invoices = None
+
+        # 采购记录条数（当前过滤结果的行数）
+        n_records = len(df_stats)
+
+        # 总数量
+        if "数量" in df_stats.columns:
+            total_qty = pd.to_numeric(df_stats["数量"], errors="coerce").sum()
+        else:
+            total_qty = None
+
+        # 总金额
+        if "金额" in df_stats.columns:
+            total_amt = pd.to_numeric(df_stats["金额"], errors="coerce").sum()
+        else:
+            total_amt = None
+
+        # 尝试识别单位（如果只有一个唯一单位就用它，否则不显示单位）
+        if "单位" in df_stats.columns:
+            units = df_stats["单位"].dropna().unique()
+            unit_label = units[0] if len(units) == 1 else ""
+        else:
+            unit_label = ""
+        unit_suffix = f"/{unit_label}" if unit_label else ""   # 单价用的 “/斤”
+        qty_suffix  = f" {unit_label}" if unit_label else ""   # 数量用的 “ 斤”
+
+        # 单价统计
+        if "单价" in df_stats.columns:
+            price_series = pd.to_numeric(df_stats["单价"], errors="coerce")
+            avg_price = price_series.mean()
+            max_price = price_series.max()
+            min_price = price_series.min()
+        else:
+            avg_price = max_price = min_price = None
+
+        # 平均每次采购数量
+        if total_qty is not None and n_records > 0:
+            avg_qty_per_record = total_qty / n_records
+        else:
+            avg_qty_per_record = None
+
+        # 默认折叠
+        with st.expander(f"「{query_text}」统计（本次上传发票）", expanded=False):
+            st.write(f"- 涉及发票：{n_invoices if n_invoices is not None else '未知'} 张")
+            st.write(f"- 采购记录：{n_records} 条")
+            if total_qty is not None:
+                st.write(f"- 总数量：{total_qty:.2f}{qty_suffix}")
+                if avg_qty_per_record is not None:
+                    st.write(f"- 单次平均采购数量：{avg_qty_per_record:.2f}{qty_suffix}")
+            if total_amt is not None:
+                st.write(f"- 总金额：{total_amt:.2f} 元")
+            if avg_price is not None:
+                st.write(f"- 平均单价：{avg_price:.2f} 元{unit_suffix}")
+                st.write(f"- 最高单价：{max_price:.2f} 元{unit_suffix}")
+                st.write(f"- 最低单价：{min_price:.2f} 元{unit_suffix}")
+    
     # 用这些列来区分不同发票
     group_cols = ["发票文件", "发票号码", "开票日期", "购买方名称", "销售方名称"]
     group_cols = [c for c in group_cols if c in df_filtered.columns]
@@ -447,6 +512,41 @@ if df_all is not None and not df_all.empty:
                     df_inv[detail_cols].reset_index(drop=True),
                     use_container_width=True
                 )
+
+                # ---------- 本发票内的「关键词」小结 ----------
+                # 只有在输入了搜索关键词时才显示
+                if query_text.strip():
+                    inv_stats = df_inv.copy()
+
+                    # 总数量
+                    if "数量" in inv_stats.columns:
+                        inv_total_qty = pd.to_numeric(inv_stats["数量"], errors="coerce").sum()
+                    else:
+                        inv_total_qty = None
+
+                    # 总金额
+                    if "金额" in inv_stats.columns:
+                        inv_total_amt = pd.to_numeric(inv_stats["金额"], errors="coerce").sum()
+                    else:
+                        inv_total_amt = None
+
+                    # 尝试识别单位（如果这一张发票里只有一个单位，就显示出来）
+                    if "单位" in inv_stats.columns:
+                        units_inv = inv_stats["单位"].dropna().unique()
+                        inv_unit_label = units_inv[0] if len(units_inv) == 1 else ""
+                    else:
+                        inv_unit_label = ""
+                    inv_qty_suffix = f" {inv_unit_label}" if inv_unit_label else ""
+
+                    # 只有当有数量或金额时才显示小结
+                    if (inv_total_qty is not None) or (inv_total_amt is not None):
+                        
+                        st.caption(f"本发票中「{query_text}」小结：")
+                        if inv_total_qty is not None:
+                            st.write(f"- 总数量：{inv_total_qty:.2f}{inv_qty_suffix}")
+                        if inv_total_amt is not None:
+                            st.write(f"- 总金额：{inv_total_amt:.2f} 元")
+                            
 
 else:
     st.info("请先上传发票并点击按钮进行解析。")
