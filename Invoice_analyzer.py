@@ -300,7 +300,7 @@ if df_all is not None and not df_all.empty:
             )
             if date_options:
                 selected_date = st.selectbox(
-                    "选择开票日期，查看该日按类别汇总（默认显示全部）：",
+                    "选择开票日期，查看该日按类别汇总（默认显示全部）",
                     options=["默认"] + date_options,
                 )
 
